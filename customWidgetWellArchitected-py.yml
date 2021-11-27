@@ -1,0 +1,171 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create Well Architected Stats Custom Widget Lambda function. Change the stack name to set the name of the Lambda function. Once your stack is created, go to the CloudWatch Console Add widget modal to continue with your custom widget creation.
+
+Parameters:
+  DoCreateExampleDashboard:
+    Description: Do you want an example dashboard created that shows how the custom widget works?
+    Type: String
+    AllowedValues: [ 'Yes', 'No']
+    Default: 'No'
+  
+  WorkloadID:
+    Description: WorkloadID of the Well Architected Review
+    Type: String
+    Default: '2180f21c7176c02d96e868c5f2785f62'
+
+Conditions:
+  CreateExampleDashboard: !Equals ["Yes", !Ref DoCreateExampleDashboard]
+
+Resources:
+  lambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3, json, os
+
+          client = boto3.client('wellarchitected')
+
+          # CloudWatch Custom Widget sample: simple echo script
+          DOCS = """
+          ## Well Architected
+          Rerieves Well Architected Risk item counts and last review date. Passing a Well Architected review ID in ```WorkloadID``` parameter will return the content of custom widget.
+
+          ### Widget parameters
+          Param | Description
+          ---|---
+          **WorkloadID** | The id can be found from the AWS Console. Under Workloads properties tab, the id is in the ARN following ```workload\```
+
+          ### Example parameters
+          ``` yaml
+          WorkloadID: 1234abcd5678efgh9012ijkl3456mnop
+          ```"""
+
+          def lambda_handler(event, context):
+              
+              response = client.get_workload(
+              WorkloadId=event["WorkloadID"]
+              )
+              workloadDate=response['Workload']['UpdatedAt']
+              owner=response['Workload']['ReviewOwner']
+              highRisk=response['Workload']['RiskCounts']['HIGH']
+              medRisk=response['Workload']['RiskCounts']['MEDIUM']
+              unanswered=response['Workload']['RiskCounts']['UNANSWERED']
+              reviewLink="https://console.aws.amazon.com/wellarchitected/home?region="+os.environ['AWS_REGION']+"#/workload/"+event["WorkloadID"]+"/overview"
+              
+              if 'describe' in event:
+                  return DOCS 
+              myData = f""" <html>
+          <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+          .label {{
+            color: white;
+            padding: 8px;
+            font-family: Arial;
+          }}
+          .success {{float:left; display: block; text-align: center; background-color: #FAFAD2; color: black; border-radius: 25px; width: 80px;}} /* Green */
+          .info {{float:left; display: block; text-align: center; background-color: #2196F3; border-radius: 25px; width: 180px;}} /* Blue */
+          .warning {{float:left; display: block; text-align: center; background-color: #ff9800; border-radius: 25px; width: 80px;}} /* Orange */
+          .danger {{float:left; display: block; text-align: center; background-color: #f44336; border-radius: 25px; width: 80px;}} /* Red */ 
+          .other {{float:left; display: block; text-align: center; background-color: #e7e7e7; font-weight: bold; color: black; width: 150px;}} /* Gray */ 
+          </style>
+          </head>
+          <body>
+
+          <h1>Well Architected Review</h1>
+
+          <span class="label other">Last UpdatedAt</span>
+          <span class="label info">{workloadDate}</span></br></br>
+          <span class="label other">Review Owner</span>
+          <span class="label info">{owner}</span></br></br>
+          <span class="label other">Medium Risk</span>
+          <span class="label warning">{medRisk}</span></br><br>
+          <span class="label other">High Risk</span>
+          <span class="label danger">{highRisk}</span></br></br>
+          <span class="label other">Unanswered</span>
+          <span class="label success">{unanswered}</span></br></br></br>
+          <a href="{reviewLink}" id="console-link" target="_blank">Well Architected Console &#8599</a>
+
+          </body>
+          </html> """
+
+
+              return f'{myData}'
+
+      Description: "CloudWatch Well Architected Custom Widget: WellArchitected Stats"
+      FunctionName: !Sub ${AWS::StackName}
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt lambdaIAMRole.Arn
+      Runtime: python3.7
+      Timeout: 60
+      Tags:
+        - Key: cw-custom-widget
+          Value: describe:readOnly
+
+  lambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}:*
+          PolicyName: lambda
+        - PolicyName: WellArchitected
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "wellarchitected:GetWorkload"
+                Resource:
+                  - !Sub arn:aws:wellarchitected:${AWS::Region}:${AWS::AccountId}:workload/${WorkloadID}
+
+
+  lambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}
+      RetentionInDays: 7
+
+  demoDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: CreateExampleDashboard
+    Properties:
+      DashboardName: !Sub ${AWS::StackName}-${AWS::Region}
+      DashboardBody:
+        !Sub
+          >
+          {
+              "widgets": [
+                  {
+                      "type": "custom",
+                      "width": 8,
+                      "height": 6,
+                      "properties": {
+                          "endpoint": "${lambdaFunction.Arn}",
+                          "params": {
+                              "WorkloadID": "${WorkloadID}"
+                          }
+                      }
+                  }
+              ]
+          }
