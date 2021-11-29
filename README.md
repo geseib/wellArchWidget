@@ -1,6 +1,6 @@
 ## Well Architected Status Cloudwatch Dashboard Custom Widget
 
-Add a widget with counts of high and medium risk items to a dashboard. Usefully as part of a Ops dashboard for your workloads.
+Add a widget with counts of high and medium risk items from a Workload's Well Architected Review and publishes them to a Cloudwatch dashboard. This can be useful as part of a Ops dashboard for your workloads.
 
 ![Well Architected Status](./widget.png "Widget")
 
